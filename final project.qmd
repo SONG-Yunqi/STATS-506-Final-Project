@@ -1,0 +1,219 @@
+---
+title: "Monte Carlo Study of Multicollinearity in Linear Regression"
+format:
+  pdf:
+    header-includes:
+      - \usepackage{etoolbox}
+      - \apptocmd{\maketitle}{\vspace*{-16ex}}{}{}
+editor: visual
+execute:
+  echo: false
+---
+
+## 1. Introduction
+
+When fitting a linear regression model, we typically seek to avoid high multicollinearity among the regressors, because it can inflate the variance of the estimated coefficients and weaken statistical inference. In this final project, I will use a Monte Carlo study to examine how the correlation between two regressors affects inference on their coefficients. In addition, I will investigate whether increasing the sample size can mitigate this problem.
+
+## 2. Method
+
+Consider the linear regression model
+
+$$
+y_i = \beta_0 + \beta_1 x_{1i} + \beta_2 x_{2i} + \epsilon_i, \quad i = 1,2,\dots,n,
+$$
+
+where $\epsilon_i \overset{\text{i.i.d.}}{\sim} N(0,1)$ and is independent of $(x_{1i}, x_{2i})$. To induce multicollinearity, we let the regressors follow a bivariate normal distribution,
+
+$$
+\begin{pmatrix}x_{1i} \\x_{2i}\end{pmatrix}\overset{\text{i.i.d.}}{\sim}N\!\left(\begin{pmatrix}0 \\ 0\end{pmatrix},\begin{pmatrix}1 & \rho \\\rho & 1\end{pmatrix}\right),
+$$
+
+where $\rho \in (-1,1)$ denotes the correlation between $x_{1i}$ and $x_{2i}$. In fact, we can always normalize regressors to mean 0 and standard deviation 1. For simplicity, we set $\beta_0 = \beta_1 =1$, $\beta_2 = 2$.
+
+To study how the correlation between the regressors affects coefficient inference, I will vary
+
+$$
+\rho \in \{0,0.5, 0.8, 0.9, 0.95, 0.99, 0.995,0.999\}.
+$$ For each value of $\rho$, I will generate $k = 500$ Monte Carlo samples of size $n = 100$, fit the linear regression model to each sample, and collect the resulting coefficient estimates. For every $\rho$, I will compute the Monte Carlo mean, variance and significance rate (i.e., the proportion of simulations in which the coefficient is deemed statistically significant) of the estimated coefficients, and examine how these quantities changes as $\rho$ increases in magnitude. In addition, I will compute the empirical coverage rate (i.e., the proportion of intervals that contain the true parameter) as well as the average length of the nominal 95% confidence intervals for $\beta_1$ and $\beta_2$.
+
+Next, to assess whether a larger sample size can alleviate the effect of multicollinearity, I will fix $\rho = 0.9$ and consider
+
+$$
+n \in \{20, 30, 50, 80, 100, 150,200,250,300, 500\}
+$$For each sample size, I will generate $k = 500$ Monte Carlo samples, fit the model, and compute the Monte Carlo variances of the coefficient estimates. Then I will plot the relationship between sample size and the Monte Carlo variances. For comparison, I also include the corresponding curves for the case $\rho = 0.95$ and $\rho = 0.99$.
+
+## 3. Result
+
+```{r}
+#| include: false
+library(MASS)
+library(tidyverse)
+```
+
+```{r}
+simulator = function(n,ro){
+  mu = c(0, 0) 
+  sigma = matrix(c(1, ro, ro, 1), nrow = 2) 
+  X = mvrnorm(n = n, mu = mu, Sigma = sigma)
+  e = rnorm(n)
+  betas = matrix(c(1,2),nrow = 2)
+  y = X %*% betas + e + 1
+  data = data.frame(cbind(y,X))
+  colnames(data) = col.names = c('y','x1','x2')
+  model = lm(y~x1+x2,data = data)
+  return(model)
+}
+
+monte_carlo = function(k,n,ro){
+  beta_est = matrix(0,nrow = k, ncol = 2)
+  st_rates = c(0,0)
+  cover_rates = c(0,0)
+  avg_lens = c(0,0)
+  
+  for (i in 1:k){
+    s = simulator(n,ro)
+    beta_est[i,] = coef(s)[2:3]
+    beta1_ci = confint(s,level = 0.95)[2,]
+    beta2_ci = confint(s,level = 0.95)[3,]
+    st_rates[1] = st_rates[1] + (beta1_ci[1] > 0 || beta1_ci[2] < 0)
+    st_rates[2] = st_rates[2] + (beta2_ci[1] > 0 || beta2_ci[2] < 0)
+    cover_rates[1] = cover_rates[1] +
+      (beta1_ci[1] <= 1 && 1 <= beta1_ci[2])
+    cover_rates[2] <- cover_rates[2] +
+      (beta2_ci[1] <= 2 && 2 <= beta2_ci[2])
+    avg_lens[1] = avg_lens[1] + beta1_ci[2] - beta1_ci[1]
+    avg_lens[2] = avg_lens[2] + beta2_ci[2] - beta2_ci[1]
+  }
+  avg_betas = colMeans(beta_est)
+  var_betas = diag(cov(beta_est))
+  st_rates = st_rates/k
+  cover_rates = cover_rates/k
+  avg_lens = avg_lens/k
+  return(c(avg_betas,var_betas,st_rates,cover_rates,avg_lens))
+}
+```
+
+```{r}
+set.seed(42)
+ros = c(0,0.5,0.8,0.9,0.95,0.99,0.995,0.999)
+n = 100
+k = 500
+results = array(0,dim = c(8,10))
+for (i in 1:8){
+  ro = ros[i]
+  re = monte_carlo(k,n,ro)
+  results[i,] = re
+}
+
+results = as.data.frame(cbind(ros,results))
+colnames(results) = c('rho','beta1','beta2','var1','var2','sr1','sr2','cr1','cr2','len1','len2')
+results = round(results,3)
+```
+
+```{r}
+set.seed(42)
+ro = 0.9
+ns = c(20, 30, 50, 80, 100, 150,200,250,300,500)
+k = 500
+resultss = array(0,dim = c(10,10))
+for (i in 1:10){
+  n = ns[i]
+  re = monte_carlo(k,n,ro)
+  resultss[i,] = re
+}
+
+resultss = as.data.frame(cbind(ns,resultss))
+colnames(resultss) = c('n','beta1','beta2','var1','var2','str1','str2','cr1','cr2','len1','len2')
+resultss = round(resultss,3)
+```
+
+```{r}
+set.seed(42)
+ro = 0.95
+ns = c(20, 30, 50, 80, 100, 150,200,250,300,500)
+k = 500
+resultsss = array(0,dim = c(10,10))
+for (i in 1:10){
+  n = ns[i]
+  re = monte_carlo(k,n,ro)
+  resultsss[i,] = re
+}
+
+resultsss = as.data.frame(cbind(ns,resultsss))
+colnames(resultsss) = c('n','beta1','beta2','var1','var2','str1','str2','cr1','cr2','len1','len2')
+resultsss = round(resultsss,3)
+```
+
+```{r}
+set.seed(42)
+ro = 0.99
+ns = c(20, 30, 50, 80, 100, 150,200,250,300,500)
+k = 500
+resultssss = array(0,dim = c(10,10))
+for (i in 1:10){
+  n = ns[i]
+  re = monte_carlo(k,n,ro)
+  resultssss[i,] = re
+}
+
+resultssss = as.data.frame(cbind(ns,resultssss))
+colnames(resultssss) = c('n','beta1','beta2','var1','var2','str1','str2','cr1','cr2','len1','len2')
+resultssss = round(resultssss,3)
+```
+
+The table below reports the values of various statistics as I vary $\rho$. The Monte Carlo means of $\beta_1$ and $\beta_2$ (column "beta1" and "beta2") remain close to 1 and 2, respectively, regardless of the value of $\rho$ . This indicates that multilinearity does not affect the unbiasedness of the linear regression estimators.
+
+However, the Monte Carlo variances of the two estimated coefficients (column "var1" and "var2") increase steadily as $\rho$ grows. Both variances rise rapidly once $\rho$ exceeds 0.9. From column "sr1" and "sr2", we also see as $\rho$ approaches 1, the significance rates drop quickly. Moreover, the smaller coefficient $\beta_1$ is affected earlier and more severely than $\beta_2$ as $\rho$ increases.
+
+Finally, although the empirical coverage rates of the 95% confidence intervals (column "cr1" and "cr2") remain close to 95%, the average interval lengths (column "len1" and "len2") become extremely large under high multicollinearity, making the resulting inference uninformative.
+
+```{r}
+results
+```
+
+The graph below shows the relationship between sample size and the Monte Carlo variances of estimated $\beta_1$ (the pattern for $\beta_2$ is nearly identical, so it is omitted). When sample size is below 100, the variance differs substantially across the three correlation levels $\rho = 0.9,0.95,0.99$. In particular, the variance under $\rho = 0.99$ is much larger than that of the other two values.
+
+However, as the sample size increases, the variance gap across different values of $\rho$ narrows rapidly. Once the sample size exceeds 300, the differences become less than 0.1. In addition, all three variances converge toward zero, approaching the variance in the ideal case with no multicollinearity ($\rho = 0$).
+
+```{r}
+plot(ns, resultss$var1,
+     type = "o",            
+     col = "blue",          
+     pch = 16,              
+     lwd = 2,               
+     xlab = "Sample Size (n)",
+     ylab = "Variance",
+     ylim = range(0,3),
+     main = "Monte Carlo Variance vs Sample Size"
+)
+
+lines(ns, resultsss$var1,
+      type = "o",
+      col = "red",
+      pch = 17,
+      lwd = 2
+)
+
+lines(ns, resultssss$var1,
+      type = "o",
+      col = "green",
+      pch = 18,
+      lwd = 2
+)
+
+legend("topright",
+       legend = c("rho = 0.9", "rho = 0.99", "rho = 0.999"),
+       col = c("blue", "red", "green"),
+       pch = c(16, 17,18,19),
+       lty = 1,
+       lwd = 2
+)
+```
+
+## 4. Conclusion
+
+Inference for linear regression coefficients can be substantially affected by multicollinearity. Although the estimators remain unbiased, their variances can become much larger than in the ideal case with no multicollinearity. When the correlation between regressors is modest, this inflation may be mild; however, as $\rho$ approaches 1, the variance increases sharply, causing coefficient estimates, especially the smaller ones, to lose statistical significance. In extreme cases, even though the 95% confidence intervals still achieve coverage rate close to 95%, the intervals become excessively wide and hence make no sense.
+
+When sample size is small (e.g., below 100), regression estimates can suffer seriously from high multicollinearity. However, as the sample size grows, the adverse effects diminish rapidly. Once the sample size exceeds approximately 500, the coefficient variances can approach 0 even when $\rho = 0.99$, suggesting that high multicollinearity poses far less concern in large-sample settings. As a result, one must be caution when handling strongly correlated regressors in small samples, and one straightforward way to solve this issue is to increase the sample size.
+
+**Github link**: <https://github.com/SONG-Yunqi/STATS-506-Final-Project>
